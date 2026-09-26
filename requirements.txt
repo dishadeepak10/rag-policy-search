@@ -1,0 +1,9 @@
+streamlit
+qdrant-client
+sentence-transformers
+pymupdf
+pytesseract
+pdf2image
+python-dotenv
+openai
+torchvision
