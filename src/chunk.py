@@ -1,6 +1,8 @@
 # chunk.py
 # Purpose: Take the page-by-page text from ingest.py, clean obvious OCR junk,
-# and split it into smaller overlapping "chunks" that are easier to search and embed.
+# and split it into smaller overlapping "chunks" — now chunking across the
+# WHOLE document (not page-by-page), so paragraphs split across a page
+# boundary stay together as one meaningful piece, as requested.
 
 import re
 
@@ -8,58 +10,51 @@ import re
 def clean_ocr_text(text):
     """
     Light cleanup of OCR output: just collapses extra whitespace/newlines.
-    Deliberately conservative — we don't try to guess and remove garbled
-    words, since that risks deleting real (short) content by mistake.
     """
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 
-def chunk_text(text, chunk_size=500, overlap=50):
+def process_pages_into_chunks(pages_data, filename, chunk_size=500, overlap=50):
     """
-    Splits a block of text into chunks of roughly `chunk_size` words,
-    with `overlap` words repeated between consecutive chunks.
-
-    Why overlap? If a sentence gets cut in half right at a chunk boundary,
-    overlap ensures that sentence still appears whole in at least one chunk,
-    so we don't lose meaning at the edges.
+    Combines ALL pages into one continuous stream of words first, while
+    remembering which page each word came from. Then chunks across that
+    full stream — so a paragraph split between, say, Page 5 and Page 6
+    ends up together in the same chunk, instead of being cut in half.
     """
-    words = text.split()
-    chunks = []
-    start = 0
-
-    while start < len(words):
-        end = start + chunk_size
-        chunk_words = words[start:end]
-        chunks.append(" ".join(chunk_words))
-        start += chunk_size - overlap
-
-    return chunks
-
-
-def process_pages_into_chunks(pages_data, filename):
-    """
-    Takes the list of {"page": N, "text": "..."} dicts from ingest.py,
-    cleans each page's text, then splits it into chunk records, each tagged with:
-    - which file it came from
-    - which page it came from
-    - its position among chunks on that page (for citations later)
-    """
-    all_chunks = []
-
+    # Step 1: flatten every page's words into one list, tagged with their page number
+    all_words_with_pages = []
     for page_info in pages_data:
         page_num = page_info["page"]
-        page_text = clean_ocr_text(page_info["text"])  # clean FIRST, then chunk
+        cleaned = clean_ocr_text(page_info["text"])
+        for word in cleaned.split():
+            all_words_with_pages.append((word, page_num))
 
-        text_chunks = chunk_text(page_text)
+    # Step 2: slide a chunking window across this COMBINED list
+    all_chunks = []
+    start = 0
+    position = 0
 
-        for position, chunk in enumerate(text_chunks):
-            all_chunks.append({
-                "filename": filename,
-                "page": page_num,
-                "chunk_position": position,
-                "text": chunk
-            })
+    while start < len(all_words_with_pages):
+        end = start + chunk_size
+        chunk_slice = all_words_with_pages[start:end]
+
+        chunk_words = [w for w, p in chunk_slice]
+        chunk_text_str = " ".join(chunk_words)
+
+        # A chunk might now span more than one page — record that as a range
+        pages_in_chunk = sorted(set(p for w, p in chunk_slice))
+        page_label = pages_in_chunk[0] if len(pages_in_chunk) == 1 else f"{pages_in_chunk[0]}-{pages_in_chunk[-1]}"
+
+        all_chunks.append({
+            "filename": filename,
+            "page": page_label,
+            "chunk_position": position,
+            "text": chunk_text_str
+        })
+
+        position += 1
+        start += chunk_size - overlap
 
     return all_chunks
 
